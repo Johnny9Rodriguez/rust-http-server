@@ -1,6 +1,6 @@
 use std::{
-    fs::File,
-    io::{BufReader, Read, Result},
+    io::{Read, Result},
+    net::TcpListener,
     sync::mpsc::{self, Receiver},
     thread,
     time::Duration,
@@ -34,6 +34,7 @@ where
                 }
             }
 
+            // Artifical delay
             thread::sleep(Duration::from_millis(50));
         }
     });
@@ -42,13 +43,20 @@ where
 }
 
 fn main() -> Result<()> {
-    let file = File::open("messages.txt")?;
-    let reader = BufReader::new(file);
+    let listener = TcpListener::bind("0.0.0.0:42069")?;
 
-    let rx = get_lines_channel(reader);
+    println!("Listening on port 42069");
 
-    for msg in rx {
-        println!("read: {msg}");
+    for stream in listener.incoming() {
+        println!("Accepted connection");
+
+        let rx = get_lines_channel(stream.unwrap());
+
+        for msg in rx {
+            println!("read: {msg}");
+        }
+
+        println!("Closed connection");
     }
 
     Ok(())
