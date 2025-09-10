@@ -2,122 +2,186 @@
 
 use std::io::{self, Error, Read};
 
-struct Request {
-    request_line: RequestLine,
-}
-
 struct RequestLine {
     http_version: String,
     request_target: String,
     method: String,
 }
 
-fn request_from_reader<R: Read>(mut r: R) -> Result<Request, std::io::Error> {
-    let mut s = String::new();
-    r.read_to_string(&mut s)?;
-
-    let request_line = parse_request_line(&s)?;
-
-    Ok(Request { request_line })
+enum RequestState {
+    Initialized,
+    Done,
 }
 
-fn parse_request_line(s: &str) -> Result<RequestLine, std::io::Error> {
-    let raw_data = s
-        .splitn(2, "\r\n")
-        .next()
-        .ok_or_else(|| Error::new(io::ErrorKind::InvalidData, "missing request line"))?;
+struct Request {
+    request_line: Option<RequestLine>,
+    state: RequestState,
+}
 
-    let mut parts = raw_data.split_whitespace();
+impl Request {
+    fn new() -> Self {
+        Self {
+            request_line: None,
+            state: RequestState::Initialized,
+        }
+    }
 
-    let method = parts
-        .next()
-        .ok_or_else(|| Error::new(io::ErrorKind::InvalidData, "missing method"))?;
+    fn parse(&mut self, data: &str) -> Result<usize, io::Error> {
+        match self.state {
+            RequestState::Initialized => {
+                let (consumed, maybe_line) = parse_request_line(data)?;
+                if let Some(line) = maybe_line {
+                    self.request_line = Some(line);
+                    self.state = RequestState::Done;
+                }
+                Ok(consumed)
+            }
+            RequestState::Done => Ok(0),
+        }
+    }
+}
 
-    let method = match method {
-        "GET" => "GET".to_string(),
-        "POST" => "POST".to_string(),
-        _ => {
+fn request_from_reader<R: Read>(mut r: R) -> Result<Request, std::io::Error> {
+    let mut req = Request::new();
+    let mut buf = Vec::with_capacity(8);
+    let mut tmp = [0u8; 8];
+
+    loop {
+        let n = r.read(&mut tmp)?;
+        if n == 0 {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unsupported method",
+                io::ErrorKind::UnexpectedEof,
+                "EOF before request complete",
             ));
         }
-    };
 
-    let request_target = parts
-        .next()
-        .ok_or_else(|| Error::new(io::ErrorKind::InvalidData, "missing request target"))?
-        .to_string();
+        buf.extend_from_slice(&tmp[..n]);
 
-    let http_version = parts
-        .next()
-        .and_then(|s| s.strip_prefix("HTTP/"))
-        .ok_or_else(|| {
-            Error::new(
+        let s = std::str::from_utf8(&buf)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid UTF-8"))?;
+
+        let consumed = req.parse(s)?;
+        if consumed > 0 {
+            buf.drain(..consumed);
+        }
+
+        if let RequestState::Done = req.state {
+            return Ok(req);
+        }
+    }
+}
+
+fn parse_request_line(s: &str) -> Result<(usize, Option<RequestLine>), io::Error> {
+    if let Some(n) = s.find("\r\n") {
+        let data = &s[..n];
+        let mut parts = data.split_whitespace();
+
+        let method = parts
+            .next()
+            .ok_or_else(|| Error::new(io::ErrorKind::InvalidData, "missing method"))?;
+
+        let method = match method {
+            "GET" => "GET".to_string(),
+            "POST" => "POST".to_string(),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unsupported method",
+                ));
+            }
+        };
+
+        let request_target = parts
+            .next()
+            .ok_or_else(|| Error::new(io::ErrorKind::InvalidData, "missing request target"))?
+            .to_string();
+
+        let http_version = parts
+            .next()
+            .and_then(|s| s.strip_prefix("HTTP/"))
+            .ok_or_else(|| {
+                Error::new(
+                    io::ErrorKind::InvalidData,
+                    "missing or invalid http version",
+                )
+            })?
+            .to_string();
+
+        if let Some(_) = parts.next() {
+            return Err(Error::new(
                 io::ErrorKind::InvalidData,
-                "missing or invalid http version",
-            )
-        })?
-        .to_string();
+                "too many parts in request line",
+            ));
+        }
 
-    if let Some(_) = parts.next() {
-        return Err(Error::new(
-            io::ErrorKind::InvalidData,
-            "too many parts in request line",
+        return Ok((
+            n,
+            Some(RequestLine {
+                http_version,
+                request_target,
+                method,
+            }),
         ));
     }
 
-    Ok(RequestLine {
-        method,
-        request_target,
-        http_version,
-    })
+    Ok((0, None))
 }
 
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
 
-    use crate::request::request_from_reader;
+    use crate::{
+        chunk_reader::ChunkReader,
+        request::{RequestState, request_from_reader},
+    };
 
     #[test]
     fn test_good_get_request_line() {
-        let input = Cursor::new(
+        let reader = ChunkReader::new(
             "GET / HTTP/1.1\r\n
             Host: localhost:42069\r\n
             User-Agent: curl/7.81.0\r\n
             Accept: */*\r\n\r\n",
+            1,
         );
 
-        let result = request_from_reader(input);
+        let result = request_from_reader(reader);
 
         assert!(result.is_ok());
 
         let r = result.unwrap();
+        assert!(matches!(r.state, RequestState::Done));
 
-        assert_eq!(r.request_line.method, "GET");
-        assert_eq!(r.request_line.request_target, "/");
-        assert_eq!(r.request_line.http_version, "1.1");
+        let line = r.request_line.expect("request line should be parsed");
+
+        assert_eq!(line.method, "GET");
+        assert_eq!(line.request_target, "/");
+        assert_eq!(line.http_version, "1.1");
     }
 
     #[test]
     fn test_good_get_request_line_with_path() {
-        let input = Cursor::new(
+        let reader = ChunkReader::new(
             "GET /coffee HTTP/1.1\r\n
             Host: localhost:42069\r\n
             User-Agent: curl/7.81.0\r\n
             Accept: */*\r\n\r\n",
+            3,
         );
 
-        let result = request_from_reader(input);
+        let result = request_from_reader(reader);
 
         assert!(result.is_ok());
 
         let r = result.unwrap();
+        assert!(matches!(r.state, RequestState::Done));
 
-        assert_eq!(r.request_line.method, "GET");
-        assert_eq!(r.request_line.request_target, "/coffee");
-        assert_eq!(r.request_line.http_version, "1.1");
+        let line = r.request_line.expect("request line should be parsed");
+
+        assert_eq!(line.method, "GET");
+        assert_eq!(line.request_target, "/coffee");
+        assert_eq!(line.http_version, "1.1");
     }
 
     #[test]
@@ -148,10 +212,13 @@ mod tests {
         assert!(result.is_ok());
 
         let r = result.unwrap();
+        assert!(matches!(r.state, RequestState::Done));
 
-        assert_eq!(r.request_line.method, "POST");
-        assert_eq!(r.request_line.request_target, "/");
-        assert_eq!(r.request_line.http_version, "1.1");
+        let line = r.request_line.expect("request line should be parsed");
+
+        assert_eq!(line.method, "POST");
+        assert_eq!(line.request_target, "/");
+        assert_eq!(line.http_version, "1.1");
     }
 
     #[test]
