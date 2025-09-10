@@ -2,10 +2,10 @@
 
 use std::io::{self, Error, Read};
 
-struct RequestLine {
-    http_version: String,
-    request_target: String,
-    method: String,
+pub struct RequestLine {
+    pub http_version: String,
+    pub request_target: String,
+    pub method: String,
 }
 
 enum RequestState {
@@ -13,8 +13,8 @@ enum RequestState {
     Done,
 }
 
-struct Request {
-    request_line: Option<RequestLine>,
+pub struct Request {
+    pub request_line: Option<RequestLine>,
     state: RequestState,
 }
 
@@ -41,7 +41,7 @@ impl Request {
     }
 }
 
-fn request_from_reader<R: Read>(mut r: R) -> Result<Request, std::io::Error> {
+pub fn request_from_reader<R: Read>(mut r: R) -> Result<Request, std::io::Error> {
     let mut req = Request::new();
     let mut buf = Vec::with_capacity(8);
     let mut tmp = [0u8; 8];

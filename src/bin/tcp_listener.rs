@@ -1,62 +1,32 @@
-use std::{
-    io::{Read, Result},
-    net::TcpListener,
-    sync::mpsc::{self, Receiver},
-    thread,
-    time::Duration,
-};
+use std::{io::Result, net::TcpListener};
 
-fn get_lines_channel<T>(mut r: T) -> Receiver<String>
-where
-    T: Read + Send + 'static,
-{
-    let (tx, rx) = mpsc::channel();
-
-    thread::spawn(move || {
-        let mut buf = [0u8; 8];
-        let mut current_line = String::new();
-
-        while let Ok(n) = r.read(&mut buf) {
-            if n == 0 {
-                break;
-            }
-
-            let chunk = String::from_utf8_lossy(&buf[..n]);
-            let parts: Vec<&str> = chunk.split('\n').collect();
-            let mut iter = parts.into_iter().peekable();
-
-            while let Some(part) = iter.next() {
-                current_line.push_str(part);
-
-                if iter.peek().is_some() {
-                    tx.send(current_line.clone()).unwrap();
-                    current_line.clear();
-                }
-            }
-
-            // Artifical delay
-            thread::sleep(Duration::from_millis(50));
-        }
-    });
-
-    rx
-}
+use rust_http::request;
 
 fn main() -> Result<()> {
     let listener = TcpListener::bind("0.0.0.0:42069")?;
-
     println!("Listening on port 42069");
 
     for stream in listener.incoming() {
-        println!("Accepted connection");
+        match stream {
+            Ok(stream) => {
+                println!("Accepted connection");
 
-        let rx = get_lines_channel(stream.unwrap());
+                match request::request_from_reader(stream) {
+                    Ok(req) => {
+                        if let Some(line) = req.request_line {
+                            println!("Request line:");
+                            println!("- Method: {}", line.method);
+                            println!("- Target: {}", line.request_target);
+                            println!("- Version: {}", line.http_version);
+                        }
+                    }
+                    Err(err) => eprintln!("Failed to parse request: {err}"),
+                }
 
-        for msg in rx {
-            println!("read: {msg}");
+                println!("Closed connection");
+            }
+            Err(err) => eprintln!("Connection error: {err}"),
         }
-
-        println!("Closed connection");
     }
 
     Ok(())
