@@ -63,6 +63,7 @@ pub fn request_from_reader<R: Read>(mut r: R) -> Result<Request, std::io::Error>
         let consumed = req.parse(s)?;
         if consumed > 0 {
             buf.drain(..consumed);
+            println!("buffer: {}", String::from_utf8(buf.clone()).unwrap());
         }
 
         if let RequestState::Done = req.state {
@@ -115,7 +116,7 @@ fn parse_request_line(s: &str) -> Result<(usize, Option<RequestLine>), io::Error
         }
 
         return Ok((
-            n,
+            n + 2,
             Some(RequestLine {
                 http_version,
                 request_target,

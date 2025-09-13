@@ -1,4 +1,5 @@
 mod chunk_reader;
+mod headers;
 mod request;
 
 fn main() {
