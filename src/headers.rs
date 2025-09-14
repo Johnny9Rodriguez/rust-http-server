@@ -1,6 +1,8 @@
 #![allow(dead_code, unused_variables)]
 use std::collections::HashMap;
 
+use regex::Regex;
+
 #[derive(Debug)]
 struct Headers(HashMap<String, String>);
 
@@ -32,8 +34,8 @@ impl Headers {
             let value = parts.next().map(str::trim);
 
             match (key, value) {
-                (Some(k), Some(v)) if !k.is_empty() && !k.chars().any(char::is_whitespace) => {
-                    self.0.insert(k.to_string(), v.to_string());
+                (Some(k), Some(v)) if Headers::is_valid_field_name(k) => {
+                    self.0.insert(k.to_string().to_lowercase(), v.to_string());
                     return (n + 2, false, None);
                 }
                 _ => {
@@ -50,7 +52,13 @@ impl Headers {
     }
 
     fn get(&self, key: &str) -> Option<&String> {
-        self.0.get(key)
+        let key = key.to_lowercase();
+        self.0.get(&key)
+    }
+
+    fn is_valid_field_name(field_name: &str) -> bool {
+        let re = Regex::new(r"^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$").unwrap();
+        re.is_match(field_name)
     }
 }
 
@@ -76,7 +84,7 @@ mod tests {
         let data = b"       Host : localhost:42069       \r\n\r\n";
         let (n, done, err) = headers.parse(data);
 
-        assert!(err.is_some(), "expected error for invalid spacing");
+        assert!(err.is_some());
         assert_eq!(n, 0);
         assert!(!done);
     }
@@ -135,6 +143,29 @@ mod tests {
         assert!(err.is_none());
         assert_eq!(headers.get("Emoji"), Some(&"😄".to_string()));
         assert_eq!(n, 13);
+        assert!(!done);
+    }
+
+    #[test]
+    fn test_lowercase_header() {
+        let mut headers = Headers::new();
+        let data = b"host: localhost:42069\r\n\r\n";
+        let (n, done, err) = headers.parse(data);
+
+        assert!(err.is_none());
+        assert_eq!(headers.get("Host"), Some(&"localhost:42069".to_string()));
+        assert_eq!(n, 23);
+        assert!(!done);
+    }
+
+    #[test]
+    fn test_invalid_field_name() {
+        let mut headers = Headers::new();
+        let data = b"h@st: localhost:42069\r\n\r\n";
+        let (n, done, err) = headers.parse(data);
+
+        assert!(err.is_some());
+        assert_eq!(n, 0);
         assert!(!done);
     }
 }

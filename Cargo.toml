@@ -5,3 +5,4 @@ edition = "2024"
 default-run = "rust-http"
 
 [dependencies]
+regex = "1.11.2"
