@@ -35,7 +35,18 @@ impl Headers {
 
             match (key, value) {
                 (Some(k), Some(v)) if Headers::is_valid_field_name(k) => {
-                    self.0.insert(k.to_string().to_lowercase(), v.to_string());
+                    let field_name = k.to_string().to_lowercase();
+
+                    match self.0.entry(field_name) {
+                        std::collections::hash_map::Entry::Vacant(e) => {
+                            e.insert(v.to_string());
+                        }
+                        std::collections::hash_map::Entry::Occupied(mut e) => {
+                            e.get_mut().push_str(", ");
+                            e.get_mut().push_str(v);
+                        }
+                    }
+
                     return (n + 2, false, None);
                 }
                 _ => {
@@ -167,5 +178,35 @@ mod tests {
         assert!(err.is_some());
         assert_eq!(n, 0);
         assert!(!done);
+    }
+
+    #[test]
+    fn test_multiple_values_for_single_header_field_name() {
+        let mut headers = Headers::new();
+        let data = concat!(
+            "set-person: lane-loves-go\r\n",
+            "set-person: prime-loves-zig\r\n",
+            "set-person: tj-loves-ocaml\r\n",
+            "\r\n",
+        )
+        .as_bytes();
+
+        let mut consumed_bytes = 0;
+        let mut done = false;
+        let mut err = None;
+
+        while !done && err.is_none() {
+            let (n, d, e) = headers.parse(&data[consumed_bytes..]);
+            consumed_bytes += n;
+            done = d;
+            err = e;
+        }
+
+        assert!(err.is_none());
+        assert_eq!(
+            headers.get("set-person"),
+            Some(&"lane-loves-go, prime-loves-zig, tj-loves-ocaml".to_string())
+        );
+        assert!(done);
     }
 }
