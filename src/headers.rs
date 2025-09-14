@@ -4,14 +4,14 @@ use std::collections::HashMap;
 use regex::Regex;
 
 #[derive(Debug)]
-struct Headers(HashMap<String, String>);
+pub struct Headers(pub HashMap<String, String>);
 
 impl Headers {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Headers(HashMap::new())
     }
 
-    fn parse(&mut self, data: &[u8]) -> (usize, bool, Option<String>) {
+    pub fn parse(&mut self, data: &[u8]) -> (usize, bool, Option<String>) {
         let s = match std::str::from_utf8(data) {
             Ok(s) => s,
             Err(err) => {
@@ -28,7 +28,7 @@ impl Headers {
                 return (2, true, None);
             }
 
-            let line = &s[..n].trim();
+            let line = s[..n].trim();
             let mut parts = line.splitn(2, ':');
             let key = parts.next();
             let value = parts.next().map(str::trim);
@@ -62,9 +62,13 @@ impl Headers {
         (0, false, None)
     }
 
-    fn get(&self, key: &str) -> Option<&String> {
+    pub fn get(&self, key: &str) -> Option<&String> {
         let key = key.to_lowercase();
         self.0.get(&key)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     fn is_valid_field_name(field_name: &str) -> bool {
@@ -98,6 +102,15 @@ mod tests {
         assert!(err.is_some());
         assert_eq!(n, 0);
         assert!(!done);
+    }
+
+    #[test]
+    fn test_special_character_header_value() {
+        let mut headers = Headers::new();
+        let data = b"Accept: */*\r\n\r\n";
+        let (n, done, err) = headers.parse(data);
+
+        assert!(err.is_none());
     }
 
     #[test]

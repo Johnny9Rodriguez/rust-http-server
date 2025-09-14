@@ -19,6 +19,12 @@ fn main() -> Result<()> {
                             println!("- Target: {}", line.request_target);
                             println!("- Version: {}", line.http_version);
                         }
+                        if !req.headers.is_empty() {
+                            println!("Headers:");
+                            for (key, value) in req.headers.0 {
+                                println!("- {}: {}", key, value);
+                            }
+                        }
                     }
                     Err(err) => eprintln!("Failed to parse request: {err}"),
                 }
